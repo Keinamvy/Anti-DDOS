@@ -18,7 +18,6 @@ MODPROBE="/sbin/modprobe"
 RMMOD="/sbin/rmmod"
 ARP="/usr/sbin/arp"
 SSHPORT="22"
-
 # Logging options.
 #------------------------------------------------------------------------------
 LOG="LOG --log-level debug --log-tcp-sequence --log-tcp-options"
@@ -77,7 +76,8 @@ for i in /proc/sys/net/ipv4/conf/*/send_redirects; do echo 0 > "$i"; done
 for i in /proc/sys/net/ipv4/conf/*/accept_source_route; do echo 0 > "$i"; done
 
 # Disable multicast routing
-for i in /proc/sys/net/ipv4/conf/*/mc_forwarding; do echo 0 > "$i"; done
+#multicast routing are disabled by default
+#for i in /proc/sys/net/ipv4/conf/*/mc_forwarding; do echo 0 > "$i"; done
 
 # Disable proxy_arp.
 for i in /proc/sys/net/ipv4/conf/*/proxy_arp; do echo 0 > "$i"; done
@@ -163,18 +163,18 @@ fi
 
 # LOG packets, then ACCEPT.
 "$IPTABLES" -N ACCEPTLOG
-"$IPTABLES" -A ACCEPTLOG -j "$LOG" "$RLIMIT" --log-prefix "ACCEPT "
+"$IPTABLES" -A ACCEPTLOG -j $LOG $RLIMIT --log-prefix "ACCEPT "
 "$IPTABLES" -A ACCEPTLOG -j ACCEPT
 
 # LOG packets, then DROP.
 "$IPTABLES" -N DROPLOG
-"$IPTABLES" -A DROPLOG -j "$LOG" "$RLIMIT" --log-prefix "DROP "
+"$IPTABLES" -A DROPLOG -j $LOG $RLIMIT --log-prefix "DROP "
 "$IPTABLES" -A DROPLOG -j DROP
 
 # LOG packets, then REJECT.
 # TCP packets are rejected with a TCP reset.
 "$IPTABLES" -N REJECTLOG
-"$IPTABLES" -A REJECTLOG -j "$LOG" "$RLIMIT" --log-prefix "REJECT "
+"$IPTABLES" -A REJECTLOG -j $LOG $RLIMIT --log-prefix "REJECT "
 "$IPTABLES" -A REJECTLOG -p tcp -j REJECT --reject-with tcp-reset
 "$IPTABLES" -A REJECTLOG -j REJECT
 
@@ -206,18 +206,18 @@ fi
 "$IPTABLES" -A FORWARD -p icmp --fragment -j DROPLOG
 
 # Allow all ESTABLISHED ICMP traffic.
-"$IPTABLES" -A INPUT -p icmp -m state --state ESTABLISHED -j ACCEPT "$RLIMIT"
-"$IPTABLES" -A OUTPUT -p icmp -m state --state ESTABLISHED -j ACCEPT "$RLIMIT"
+"$IPTABLES" -A INPUT -p icmp -m state --state ESTABLISHED -j ACCEPT $RLIMIT
+"$IPTABLES" -A OUTPUT -p icmp -m state --state ESTABLISHED -j ACCEPT $RLIMIT
 
 # Allow some parts of the RELATED ICMP traffic, block the rest.
-"$IPTABLES" -A INPUT -p icmp -m state --state RELATED -j RELATED_ICMP "$RLIMIT"
-"$IPTABLES" -A OUTPUT -p icmp -m state --state RELATED -j RELATED_ICMP "$RLIMIT"
+"$IPTABLES" -A INPUT -p icmp -m state --state RELATED -j RELATED_ICMP $RLIMIT
+"$IPTABLES" -A OUTPUT -p icmp -m state --state RELATED -j RELATED_ICMP $RLIMIT
 
 # Allow incoming ICMP echo requests (ping), but only rate-limited.
-"$IPTABLES" -A INPUT -p icmp --icmp-type echo-request -j ACCEPT "$RLIMIT"
+"$IPTABLES" -A INPUT -p icmp --icmp-type echo-request -j ACCEPT $RLIMIT
 
 # Allow outgoing ICMP echo requests (ping), but only rate-limited.
-"$IPTABLES" -A OUTPUT -p icmp --icmp-type echo-request -j ACCEPT "$RLIMIT"
+"$IPTABLES" -A OUTPUT -p icmp --icmp-type echo-request -j ACCEPT $RLIMIT
 
 # Drop any other ICMP traffic.
 "$IPTABLES" -A INPUT -p icmp -j DROPLOG
@@ -326,7 +326,7 @@ fi
 "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 995 -j ACCEPT
 
 # Allow outgoing SSH requests.
-"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport "$SSHPORT" -j ACCEPT
+"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport $SSHPORT -j ACCEPT
 
 # Allow outgoing FTP requests. Unencrypted, use with care.
 "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 21 -j ACCEPT
@@ -379,6 +379,12 @@ fi
 # Selectively allow certain inbound connections, block the rest.
 #------------------------------------------------------------------------------
 
+# Allow incoming Minecraft Java requests.
+"$IPTABLES" -A INPUT -m state --state NEW -p tcp --dport 25565 -j ACCEPT
+
+# Allow incoming Minecraft Bedrock requests.
+"$IPTABLES" -A INPUT -m state --state NEW -p udp --dport 19132 -j ACCEPT
+
 # Allow incoming DNS requests.
 "$IPTABLES" -A INPUT -m state --state NEW -p udp --dport 53 -j ACCEPT
 "$IPTABLES" -A INPUT -m state --state NEW -p tcp --dport 53 -j ACCEPT
@@ -402,7 +408,7 @@ fi
 "$IPTABLES" -A INPUT -m state --state NEW -p tcp --dport 25 -j ACCEPT
 
 # Allow incoming SSH requests.
-"$IPTABLES" -A INPUT -m state --state NEW -p tcp --dport "$SSHPORT" -j ACCEPT
+"$IPTABLES" -A INPUT -m state --state NEW -p tcp --dport $SSHPORT -j ACCEPT
 
 # Allow incoming FTP requests.
 "$IPTABLES" -A INPUT -m state --state NEW -p tcp --dport 21 -j ACCEPT
@@ -442,7 +448,7 @@ fi
 
 # Appending rules : Let’s add some more IPv6 rules to our firewall.
 
-sudo ip6tables -A INPUT -p tcp --dport "$SSHPORT" -s HOST_IPV6_IP -j ACCEPT
+sudo ip6tables -A INPUT -p tcp --dport $SSHPORT -j ACCEPT
 sudo ip6tables -A INPUT -p tcp --dport 80 -j ACCEPT
 sudo ip6tables -A INPUT -p tcp --dport 21 -j ACCEPT
 sudo ip6tables -A INPUT -p tcp --dport 25 -j ACCEPT
