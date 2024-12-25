@@ -19,6 +19,8 @@ RMMOD="/sbin/rmmod"
 ARP="/usr/sbin/arp"
 SSHPORT="22"
 
+
+
 # Logging options.
 #------------------------------------------------------------------------------
 LOG="LOG --log-level debug --log-tcp-sequence --log-tcp-options"
@@ -113,9 +115,9 @@ for i in /proc/sys/net/ipv4/conf/*/bootp_relay; do echo 0 > "$i"; done
 
 # Drop everything by default.
 "$IPTABLES" -P INPUT DROP
-"$IPTABLES" -P FORWARD DROP
 
-#We dont care about output traffic, just input anf forwarded tbh
+#We dont care about output traffic, just input tbh
+"$IPTABLES" -P FORWARD ACCEPT
 "$IPTABLES" -P OUTPUT ACCEPT
 
 # Set the nat/mangle/raw tables' chains to ACCEPT
@@ -129,56 +131,27 @@ for i in /proc/sys/net/ipv4/conf/*/bootp_relay; do echo 0 > "$i"; done
 "$IPTABLES" -t mangle -P OUTPUT ACCEPT
 "$IPTABLES" -t mangle -P POSTROUTING ACCEPT
 
-# Completely disable IPv6.
-# We dont use IPv6 and IPv6 protection is in progress
-#------------------------------------------------------------------------------
-
-# Block all IPv6 traffic
-# If the ip6tables command is available, try to block all IPv6 traffic.
-#if test -x "$IP6TABLES"; then
-# Set the default policies
-# drop everything
-#"$IP6TABLES" -P INPUT DROP 2>/dev/null
-#"$IP6TABLES" -P FORWARD DROP 2>/dev/null
-#"$IP6TABLES" -P OUTPUT DROP 2>/dev/null
-#
-## The mangle table can pass everything
-#"$IP6TABLES" -t mangle -P PREROUTING ACCEPT 2>/dev/null
-#"$IP6TABLES" -t mangle -P INPUT ACCEPT 2>/dev/null
-#"$IP6TABLES" -t mangle -P FORWARD ACCEPT 2>/dev/null
-#"$IP6TABLES" -t mangle -P OUTPUT ACCEPT 2>/dev/null
-#"$IP6TABLES" -t mangle -P POSTROUTING ACCEPT 2>/dev/null
-
-# Delete all rules.
-#"$IP6TABLES" -F 2>/dev/null
-#"$IP6TABLES" -t mangle -F 2>/dev/null
-
-# Delete all chains.
-#"$IP6TABLES" -X 2>/dev/null
-#"$IP6TABLES" -t mangle -X 2>/dev/null
-
-# Zero all packets and counters.
-#"$IP6TABLES" -Z 2>/dev/null
-#"$IP6TABLES" -t mangle -Z 2>/dev/null
-#fi
-
 # Custom user-defined chains.
 #------------------------------------------------------------------------------
 
+# Rate limit ICMP packets
+"$IPTABLES" -A INPUT -p icmp --icmp-type echo-request -m limit --limit 1/s -j ACCEPT
+"$IPTABLES" -A INPUT -p icmp --icmp-type echo-request -j DROP
+
 # LOG packets, then ACCEPT.
 "$IPTABLES" -N ACCEPTLOG
-"$IPTABLES" -A ACCEPTLOG -j $LOG $RLIMIT --log-prefix "ACCEPT "
+"$IPTABLES" -A ACCEPTLOG -j $LOG $RLIMIT --log-prefix "[ACCEPT]: "
 "$IPTABLES" -A ACCEPTLOG -j ACCEPT
 
 # LOG packets, then DROP.
 "$IPTABLES" -N DROPLOG
-"$IPTABLES" -A DROPLOG -j $LOG $RLIMIT --log-prefix "DROP "
+"$IPTABLES" -A DROPLOG -j $LOG $RLIMIT --log-prefix "[DROP]: "
 "$IPTABLES" -A DROPLOG -j DROP
 
 # LOG packets, then REJECT.
 # TCP packets are rejected with a TCP reset.
 "$IPTABLES" -N REJECTLOG
-"$IPTABLES" -A REJECTLOG -j $LOG $RLIMIT --log-prefix "REJECT "
+"$IPTABLES" -A REJECTLOG -j $LOG $RLIMIT --log-prefix "[REJECT]: "
 "$IPTABLES" -A REJECTLOG -p tcp -j REJECT --reject-with tcp-reset
 "$IPTABLES" -A REJECTLOG -j REJECT
 
@@ -261,21 +234,37 @@ for i in /proc/sys/net/ipv4/conf/*/bootp_relay; do echo 0 > "$i"; done
 "$IPTABLES" -A INPUT -m state --state NEW -p tcp --tcp-flags ALL ALL -j DROP
 "$IPTABLES" -A INPUT -m state --state NEW -p tcp --tcp-flags ALL NONE -j DROP
 
-# TODO: Some more anti-spoofing rules? For example:
-# "$IPTABLES" -A INPUT -p tcp --tcp-flags ALL FIN,URG,PSH -j DROP
-# "$IPTABLES" -A INPUT -p tcp --tcp-flags SYN,RST SYN,RST -j DROP
-# "$IPTABLES" -A INPUT -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP
+#Syn-flood protection
 "$IPTABLES" -N SYN_FLOOD
 "$IPTABLES" -A INPUT -p tcp --syn -j SYN_FLOOD
 "$IPTABLES" -A SYN_FLOOD -m limit --limit 2/s --limit-burst 6 -j RETURN
 "$IPTABLES" -A SYN_FLOOD -j DROP
 
 
+# A list of well known combination of Bad TCP flags
+# which is going to handle them
+"$IPTABLES" -A INPUT -p tcp --tcp-flags ACK,FIN FIN -j DROP
+"$IPTABLES" -A INPUT -p tcp --tcp-flags ACK,PSH PSH -j DROP
+"$IPTABLES" -A INPUT -p tcp --tcp-flags ACK,URG URG -j DROP
+"$IPTABLES" -A INPUT -p tcp --tcp-flags FIN,RST FIN,RST -j DROP
+"$IPTABLES" -A INPUT -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP
+"$IPTABLES" -A INPUT -p tcp --tcp-flags SYN,RST SYN,RST -j DROP
+"$IPTABLES" -A INPUT -p tcp --tcp-flags ALL ALL -j DROP
+"$IPTABLES" -A INPUT -p tcp --tcp-flags ALL NONE -j DROP
+"$IPTABLES" -A INPUT -p tcp --tcp-flags ALL FIN,PSH,URG -j DROP
+"$IPTABLES" -A INPUT -p tcp --tcp-flags ALL SYN,FIN,PSH,URG -j DROP
+"$IPTABLES" -A INPUT -p tcp --tcp-flags ALL SYN,RST,ACK,FIN,URG -j DROP
+
+
 
 
 # TODO: Block known-bad IPs (see http://www.dshield.org/top10.php).
 # "$IPTABLES" -A INPUT -s INSERT-BAD-IP-HERE -j DROPLOG
-
+ipset -q flush ipsum
+ipset -q create ipsum hash:ip
+for ip in $(curl --compressed https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt 2>/dev/null | grep -v "#" | grep -v -E "\s[1-2]$" | cut -f 1); do ipset add ipsum $ip; done
+"$IPTABLES" -D INPUT -m set --match-set ipsum src -j DROP 2>/dev/null
+"$IPTABLES" -I INPUT -m set --match-set ipsum src -j DROP
 
 
 
@@ -313,87 +302,10 @@ for i in /proc/sys/net/ipv4/conf/*/bootp_relay; do echo 0 > "$i"; done
 "$IPTABLES" -A INPUT -s 223.0.0.0/8 -j DROP
 "$IPTABLES" -A INPUT -s 224.0.0.0/3 -j DROP
 
-## Selectively allow certain outbound connections, block the rest.
-##------------------------------------------------------------------------------
-#
-## Allow outgoing DNS requests. Few things will work without this.
-#"$IPTABLES" -A OUTPUT -m state --state NEW -p udp --dport 53 -j ACCEPT
-#"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 53 -j ACCEPT
-#
-## Allow outgoing HTTP requests. Unencrypted, use with care.
-#"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 80 -j ACCEPT
-#
-## Allow outgoing HTTPS requests.
-#"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 443 -j ACCEPT
-#
-## Allow outgoing SMTPS requests. Do NOT allow unencrypted SMTP!
-## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 465 -j ACCEPT
-#
-## Allow outgoing "submission" (RFC 2476) requests.
-#"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 587 -j ACCEPT
-#
-## Allow outgoing POP3S requests.
-#"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 995 -j ACCEPT
-#
-## Allow outgoing SSH requests.
-#"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport $SSHPORT -j ACCEPT
-#
-## Allow outgoing FTP requests. Unencrypted, use with care.
-#"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 21 -j ACCEPT
-#
-## Allow outgoing NNTP requests. Unencrypted, use with care.
-## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 119 -j ACCEPT
-#
-## Allow outgoing NTP requests. Unencrypted, use with care.
-## "$IPTABLES" -A OUTPUT -m state --state NEW -p udp --dport 123 -j ACCEPT
-#
-## Allow outgoing IRC requests. Unencrypted, use with care.
-## Note: This usually needs the ip_conntrack_irc kernel module.
-## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 6667 -j ACCEPT
-#
-## Allow outgoing requests to various proxies. Unencrypted, use with care.
-## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 8080 -j ACCEPT
-## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 8090 -j ACCEPT
-#
-## Allow outgoing DHCP requests. Unencrypted, use with care.
-## TODO: This is completely untested, I have no idea whether it works!
-## TODO: I think this can be tightened a bit more.
-#"$IPTABLES" -A OUTPUT -m state --state NEW -p udp --sport 67:68 --dport 67:68 -j ACCEPT
-#
-## Allow outgoing CVS requests. Unencrypted, use with care.
-## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 2401 -j ACCEPT
-#
-## Allow outgoing MySQL requests. Unencrypted, use with care.
-## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 3306 -j ACCEPT
-#
-## Allow outgoing SVN requests. Unencrypted, use with care.
-## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 3690 -j ACCEPT
-#
-## Allow outgoing PLESK requests. Unencrypted, use with care.
-## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 8443 -j ACCEPT
-#
-## Allow outgoing Tor (http://tor.eff.org) requests.
-## Note: Do _not_ use unencrypted protocols over Tor (sniffing is possible)!
-## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9001 -j ACCEPT
-## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9002 -j ACCEPT
-## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9030 -j ACCEPT
-## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9031 -j ACCEPT
-## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9090 -j ACCEPT
-## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9091 -j ACCEPT
-#
-## Allow outgoing OpenVPN requests.
-##"$IPTABLES" -A OUTPUT -m state --state NEW -p udp --dport 1194 -j ACCEPT
-#
-## TODO: ICQ, MSN, GTalk, Skype, Yahoo, etc...
 
 # Selectively allow certain inbound connections, block the rest.
 #------------------------------------------------------------------------------
 
-# Allow incoming Minecraft Java requests.
-"$IPTABLES" -A INPUT -m state --state NEW -p tcp --dport 25565 -j ACCEPT
-
-# Allow incoming Minecraft Bedrock requests.
-"$IPTABLES" -A INPUT -m state --state NEW -p udp --dport 19132 -j ACCEPT
 
 # Allow incoming DNS requests.
 "$IPTABLES" -A INPUT -m state --state NEW -p udp --dport 53 -j ACCEPT
@@ -449,27 +361,6 @@ for i in /proc/sys/net/ipv4/conf/*/bootp_relay; do echo 0 > "$i"; done
 "$IPTABLES" -A OUTPUT -j REJECTLOG
 "$IPTABLES" -A FORWARD -j REJECTLOG
 
-#------------------------------------------------------------------------------
-# Testing the firewall.
-#------------------------------------------------------------------------------
-
-# You should check/test that the firewall really works, using
-# iptables -vnL, nmap, ping, telnet, ...
-
-# Appending rules : Let’s add some more IPv6 rules to our firewall.
-
-#sudo ip6tables -A INPUT -p tcp --dport $SSHPORT -j ACCEPT
-#sudo ip6tables -A INPUT -p tcp --dport 80 -j ACCEPT
-#sudo ip6tables -A INPUT -p tcp --dport 21 -j ACCEPT
-#sudo ip6tables -A INPUT -p tcp --dport 25 -j ACCEPT
-
-# To see the IPv6 rules with line numbers, type the following command:
-
-#sudo ip6tables -L -n --line-numbers
-
-# Deleting rules
-
-#sudo ip6tables -D INPUT -p tcp --dport 21 -j ACCEPT
 
 # Exit gracefully.
 #------------------------------------------------------------------------------
