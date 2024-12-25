@@ -18,6 +18,7 @@ MODPROBE="/sbin/modprobe"
 RMMOD="/sbin/rmmod"
 ARP="/usr/sbin/arp"
 SSHPORT="22"
+
 # Logging options.
 #------------------------------------------------------------------------------
 LOG="LOG --log-level debug --log-tcp-sequence --log-tcp-options"
@@ -89,25 +90,6 @@ for i in /proc/sys/net/ipv4/conf/*/secure_redirects; do echo 1 > "$i"; done
 # Disable bootp_relay
 for i in /proc/sys/net/ipv4/conf/*/bootp_relay; do echo 0 > "$i"; done
 
-# Default policies.
-#------------------------------------------------------------------------------
-
-# Drop everything by default.
-"$IPTABLES" -P INPUT DROP
-"$IPTABLES" -P FORWARD DROP
-"$IPTABLES" -P OUTPUT DROP
-
-# Set the nat/mangle/raw tables' chains to ACCEPT
-"$IPTABLES" -t nat -P PREROUTING ACCEPT
-"$IPTABLES" -t nat -P OUTPUT ACCEPT
-"$IPTABLES" -t nat -P POSTROUTING ACCEPT
-
-"$IPTABLES" -t mangle -P PREROUTING ACCEPT
-"$IPTABLES" -t mangle -P INPUT ACCEPT
-"$IPTABLES" -t mangle -P FORWARD ACCEPT
-"$IPTABLES" -t mangle -P OUTPUT ACCEPT
-"$IPTABLES" -t mangle -P POSTROUTING ACCEPT
-
 # Cleanup.
 #------------------------------------------------------------------------------
 
@@ -126,37 +108,59 @@ for i in /proc/sys/net/ipv4/conf/*/bootp_relay; do echo 0 > "$i"; done
 "$IPTABLES" -t nat -Z
 "$IPTABLES" -t mangle -Z
 
+# Default policies.
+#------------------------------------------------------------------------------
+
+# Drop everything by default.
+"$IPTABLES" -P INPUT DROP
+"$IPTABLES" -P FORWARD DROP
+
+#We dont care about output traffic, just input anf forwarded tbh
+"$IPTABLES" -P OUTPUT ACCEPT
+
+# Set the nat/mangle/raw tables' chains to ACCEPT
+"$IPTABLES" -t nat -P PREROUTING ACCEPT
+"$IPTABLES" -t nat -P OUTPUT ACCEPT
+"$IPTABLES" -t nat -P POSTROUTING ACCEPT
+
+"$IPTABLES" -t mangle -P PREROUTING ACCEPT
+"$IPTABLES" -t mangle -P INPUT ACCEPT
+"$IPTABLES" -t mangle -P FORWARD ACCEPT
+"$IPTABLES" -t mangle -P OUTPUT ACCEPT
+"$IPTABLES" -t mangle -P POSTROUTING ACCEPT
+
 # Completely disable IPv6.
+# We dont use IPv6 and IPv6 protection is in progress
 #------------------------------------------------------------------------------
 
 # Block all IPv6 traffic
 # If the ip6tables command is available, try to block all IPv6 traffic.
-if test -x "$IP6TABLES"; then
+#if test -x "$IP6TABLES"; then
 # Set the default policies
 # drop everything
-"$IP6TABLES" -P INPUT DROP 2>/dev/null
-"$IP6TABLES" -P FORWARD DROP 2>/dev/null
-"$IP6TABLES" -P OUTPUT DROP 2>/dev/null
-
-# The mangle table can pass everything
-"$IP6TABLES" -t mangle -P PREROUTING ACCEPT 2>/dev/null
-"$IP6TABLES" -t mangle -P INPUT ACCEPT 2>/dev/null
-"$IP6TABLES" -t mangle -P FORWARD ACCEPT 2>/dev/null
-"$IP6TABLES" -t mangle -P OUTPUT ACCEPT 2>/dev/null
-"$IP6TABLES" -t mangle -P POSTROUTING ACCEPT 2>/dev/null
+#"$IP6TABLES" -P INPUT DROP 2>/dev/null
+#"$IP6TABLES" -P FORWARD DROP 2>/dev/null
+#"$IP6TABLES" -P OUTPUT DROP 2>/dev/null
+#
+## The mangle table can pass everything
+#"$IP6TABLES" -t mangle -P PREROUTING ACCEPT 2>/dev/null
+#"$IP6TABLES" -t mangle -P INPUT ACCEPT 2>/dev/null
+#"$IP6TABLES" -t mangle -P FORWARD ACCEPT 2>/dev/null
+#"$IP6TABLES" -t mangle -P OUTPUT ACCEPT 2>/dev/null
+#"$IP6TABLES" -t mangle -P POSTROUTING ACCEPT 2>/dev/null
 
 # Delete all rules.
-"$IP6TABLES" -F 2>/dev/null
-"$IP6TABLES" -t mangle -F 2>/dev/null
+#"$IP6TABLES" -F 2>/dev/null
+#"$IP6TABLES" -t mangle -F 2>/dev/null
 
 # Delete all chains.
-"$IP6TABLES" -X 2>/dev/null
-"$IP6TABLES" -t mangle -X 2>/dev/null
+#"$IP6TABLES" -X 2>/dev/null
+#"$IP6TABLES" -t mangle -X 2>/dev/null
 
 # Zero all packets and counters.
-"$IP6TABLES" -Z 2>/dev/null
-"$IP6TABLES" -t mangle -Z 2>/dev/null
-fi
+#"$IP6TABLES" -Z 2>/dev/null
+#"$IP6TABLES" -t mangle -Z 2>/dev/null
+#fi
 
 # Custom user-defined chains.
 #------------------------------------------------------------------------------
@@ -266,8 +270,14 @@ fi
 "$IPTABLES" -A SYN_FLOOD -m limit --limit 2/s --limit-burst 6 -j RETURN
 "$IPTABLES" -A SYN_FLOOD -j DROP
 
+
+
+
 # TODO: Block known-bad IPs (see http://www.dshield.org/top10.php).
 # "$IPTABLES" -A INPUT -s INSERT-BAD-IP-HERE -j DROPLOG
+
+
+
 
 # Drop any traffic from IANA-reserved IPs.
 #------------------------------------------------------------------------------
@@ -303,78 +313,78 @@ fi
 "$IPTABLES" -A INPUT -s 223.0.0.0/8 -j DROP
 "$IPTABLES" -A INPUT -s 224.0.0.0/3 -j DROP
 
-# Selectively allow certain outbound connections, block the rest.
-#------------------------------------------------------------------------------
-
-# Allow outgoing DNS requests. Few things will work without this.
-"$IPTABLES" -A OUTPUT -m state --state NEW -p udp --dport 53 -j ACCEPT
-"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 53 -j ACCEPT
-
-# Allow outgoing HTTP requests. Unencrypted, use with care.
-"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 80 -j ACCEPT
-
-# Allow outgoing HTTPS requests.
-"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 443 -j ACCEPT
-
-# Allow outgoing SMTPS requests. Do NOT allow unencrypted SMTP!
-# "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 465 -j ACCEPT
-
-# Allow outgoing "submission" (RFC 2476) requests.
-"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 587 -j ACCEPT
-
-# Allow outgoing POP3S requests.
-"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 995 -j ACCEPT
-
-# Allow outgoing SSH requests.
-"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport $SSHPORT -j ACCEPT
-
-# Allow outgoing FTP requests. Unencrypted, use with care.
-"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 21 -j ACCEPT
-
-# Allow outgoing NNTP requests. Unencrypted, use with care.
-# "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 119 -j ACCEPT
-
-# Allow outgoing NTP requests. Unencrypted, use with care.
-# "$IPTABLES" -A OUTPUT -m state --state NEW -p udp --dport 123 -j ACCEPT
-
-# Allow outgoing IRC requests. Unencrypted, use with care.
-# Note: This usually needs the ip_conntrack_irc kernel module.
-# "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 6667 -j ACCEPT
-
-# Allow outgoing requests to various proxies. Unencrypted, use with care.
-# "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 8080 -j ACCEPT
-# "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 8090 -j ACCEPT
-
-# Allow outgoing DHCP requests. Unencrypted, use with care.
-# TODO: This is completely untested, I have no idea whether it works!
-# TODO: I think this can be tightened a bit more.
-"$IPTABLES" -A OUTPUT -m state --state NEW -p udp --sport 67:68 --dport 67:68 -j ACCEPT
-
-# Allow outgoing CVS requests. Unencrypted, use with care.
-# "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 2401 -j ACCEPT
-
-# Allow outgoing MySQL requests. Unencrypted, use with care.
-# "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 3306 -j ACCEPT
-
-# Allow outgoing SVN requests. Unencrypted, use with care.
-# "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 3690 -j ACCEPT
-
-# Allow outgoing PLESK requests. Unencrypted, use with care.
-# "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 8443 -j ACCEPT
-
-# Allow outgoing Tor (http://tor.eff.org) requests.
-# Note: Do _not_ use unencrypted protocols over Tor (sniffing is possible)!
-# "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9001 -j ACCEPT
-# "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9002 -j ACCEPT
-# "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9030 -j ACCEPT
-# "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9031 -j ACCEPT
-# "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9090 -j ACCEPT
-# "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9091 -j ACCEPT
-
-# Allow outgoing OpenVPN requests.
-"$IPTABLES" -A OUTPUT -m state --state NEW -p udp --dport 1194 -j ACCEPT
-
-# TODO: ICQ, MSN, GTalk, Skype, Yahoo, etc...
+## Selectively allow certain outbound connections, block the rest.
+##------------------------------------------------------------------------------
+#
+## Allow outgoing DNS requests. Few things will work without this.
+#"$IPTABLES" -A OUTPUT -m state --state NEW -p udp --dport 53 -j ACCEPT
+#"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 53 -j ACCEPT
+#
+## Allow outgoing HTTP requests. Unencrypted, use with care.
+#"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 80 -j ACCEPT
+#
+## Allow outgoing HTTPS requests.
+#"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 443 -j ACCEPT
+#
+## Allow outgoing SMTPS requests. Do NOT allow unencrypted SMTP!
+## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 465 -j ACCEPT
+#
+## Allow outgoing "submission" (RFC 2476) requests.
+#"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 587 -j ACCEPT
+#
+## Allow outgoing POP3S requests.
+#"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 995 -j ACCEPT
+#
+## Allow outgoing SSH requests.
+#"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport $SSHPORT -j ACCEPT
+#
+## Allow outgoing FTP requests. Unencrypted, use with care.
+#"$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 21 -j ACCEPT
+#
+## Allow outgoing NNTP requests. Unencrypted, use with care.
+## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 119 -j ACCEPT
+#
+## Allow outgoing NTP requests. Unencrypted, use with care.
+## "$IPTABLES" -A OUTPUT -m state --state NEW -p udp --dport 123 -j ACCEPT
+#
+## Allow outgoing IRC requests. Unencrypted, use with care.
+## Note: This usually needs the ip_conntrack_irc kernel module.
+## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 6667 -j ACCEPT
+#
+## Allow outgoing requests to various proxies. Unencrypted, use with care.
+## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 8080 -j ACCEPT
+## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 8090 -j ACCEPT
+#
+## Allow outgoing DHCP requests. Unencrypted, use with care.
+## TODO: This is completely untested, I have no idea whether it works!
+## TODO: I think this can be tightened a bit more.
+#"$IPTABLES" -A OUTPUT -m state --state NEW -p udp --sport 67:68 --dport 67:68 -j ACCEPT
+#
+## Allow outgoing CVS requests. Unencrypted, use with care.
+## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 2401 -j ACCEPT
+#
+## Allow outgoing MySQL requests. Unencrypted, use with care.
+## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 3306 -j ACCEPT
+#
+## Allow outgoing SVN requests. Unencrypted, use with care.
+## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 3690 -j ACCEPT
+#
+## Allow outgoing PLESK requests. Unencrypted, use with care.
+## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 8443 -j ACCEPT
+#
+## Allow outgoing Tor (http://tor.eff.org) requests.
+## Note: Do _not_ use unencrypted protocols over Tor (sniffing is possible)!
+## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9001 -j ACCEPT
+## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9002 -j ACCEPT
+## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9030 -j ACCEPT
+## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9031 -j ACCEPT
+## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9090 -j ACCEPT
+## "$IPTABLES" -A OUTPUT -m state --state NEW -p tcp --dport 9091 -j ACCEPT
+#
+## Allow outgoing OpenVPN requests.
+##"$IPTABLES" -A OUTPUT -m state --state NEW -p udp --dport 1194 -j ACCEPT
+#
+## TODO: ICQ, MSN, GTalk, Skype, Yahoo, etc...
 
 # Selectively allow certain inbound connections, block the rest.
 #------------------------------------------------------------------------------
@@ -448,18 +458,18 @@ fi
 
 # Appending rules : Let’s add some more IPv6 rules to our firewall.
 
-sudo ip6tables -A INPUT -p tcp --dport $SSHPORT -j ACCEPT
-sudo ip6tables -A INPUT -p tcp --dport 80 -j ACCEPT
-sudo ip6tables -A INPUT -p tcp --dport 21 -j ACCEPT
-sudo ip6tables -A INPUT -p tcp --dport 25 -j ACCEPT
+#sudo ip6tables -A INPUT -p tcp --dport $SSHPORT -j ACCEPT
+#sudo ip6tables -A INPUT -p tcp --dport 80 -j ACCEPT
+#sudo ip6tables -A INPUT -p tcp --dport 21 -j ACCEPT
+#sudo ip6tables -A INPUT -p tcp --dport 25 -j ACCEPT
 
 # To see the IPv6 rules with line numbers, type the following command:
 
-sudo ip6tables -L -n --line-numbers
+#sudo ip6tables -L -n --line-numbers
 
 # Deleting rules
 
-sudo ip6tables -D INPUT -p tcp --dport 21 -j ACCEPT
+#sudo ip6tables -D INPUT -p tcp --dport 21 -j ACCEPT
 
 # Exit gracefully.
 #------------------------------------------------------------------------------
