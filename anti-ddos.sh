@@ -134,10 +134,6 @@ for i in /proc/sys/net/ipv4/conf/*/bootp_relay; do echo 0 > "$i"; done
 # Custom user-defined chains.
 #------------------------------------------------------------------------------
 
-# Rate limit ICMP packets
-"$IPTABLES" -A INPUT -p icmp --icmp-type echo-request -m limit --limit 1/s -j ACCEPT
-"$IPTABLES" -A INPUT -p icmp --icmp-type echo-request -j DROP
-
 # LOG packets, then ACCEPT.
 "$IPTABLES" -N ACCEPTLOG
 "$IPTABLES" -A ACCEPTLOG -j $LOG $RLIMIT --log-prefix "[ACCEPT]: "
